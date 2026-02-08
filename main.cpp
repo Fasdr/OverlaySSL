@@ -18,6 +18,7 @@
 
 extern "C" {
     #include <xdo.h>
+    #include <X11/Xlib.h> // Standard X11
 }
 
 // Configuration
@@ -49,13 +50,13 @@ public:
     float holdProgress = 0.0f; 
     qint64 lastCloseTime = 0;
 
-    // --- DRAG SUPPORT ---
+    // Dragging State
     QPoint dragStartPosition;
     QPoint windowStartPosition;
     bool isDragging = false;
 
     RadialOverlay(QWidget *parent = nullptr) : QWidget(parent) {
-        // --- 1. WINDOW FLAGS ---
+        // --- WINDOW FLAGS ---
         setWindowFlags(Qt::FramelessWindowHint | 
                        Qt::WindowStaysOnTopHint | 
                        Qt::Tool | 
@@ -64,20 +65,16 @@ public:
                        
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_ShowWithoutActivating);
-        
-        // --- 2. TABLET SUPPORT ---
         setAttribute(Qt::WA_AcceptTouchEvents); 
         
         QScreen *screen = QGuiApplication::primaryScreen();
         int size = std::min(screen->geometry().width(), screen->geometry().height()) * 0.35; 
         setFixedSize(size, size);
 
-        // Solid, high-contrast colors
         QColor cMove = QColor(0, 128, 128, 200);   
         QColor cAction = QColor(128, 0, 128, 200); 
         QColor cClose = QColor(160, 80, 80, 220);  
 
-        // Layout
         buttons.push_back({"X", "", 0.0, 0.25, 0, 360, cClose, false, true});
         buttons.push_back({"D", "d", 0.25, 0.60, -90, 180, cMove});
         buttons.push_back({"A", "a", 0.25, 0.60,  90, 180, cMove});
@@ -102,7 +99,7 @@ public:
 
         holdTimer = new QTimer(this);
         connect(holdTimer, &QTimer::timeout, this, [this](){
-            if (isDragging) return; // Don't close while dragging
+            if (isDragging) return; 
             holdProgress += 0.05f; 
             if (holdProgress >= 1.0f) {
                 holdTimer->stop();
@@ -129,18 +126,15 @@ public:
         holdProgress = 0.0f;
     }
 
-    // --- UNIFIED INPUT (MOUSE + TABLET) ---
+    // --- INPUT HANDLING ---
     void handlePress(const QPointF &localPos, const QPointF &globalPos) {
         int idx = getButtonIndexAt(localPos); 
         if (idx != -1) {
             pressedIndex = idx;
             buttons[idx].isPressed = true;
-            
             if (buttons[idx].isCenter) {
-                // START CLOSE TIMER & PREPARE DRAG
                 holdProgress = 0.0f;
                 holdTimer->start(50);
-                
                 dragStartPosition = globalPos.toPoint();
                 windowStartPosition = this->pos();
                 isDragging = false;
@@ -154,10 +148,8 @@ public:
 
     void handleRelease(const QPointF &pos) {
         if (pressedIndex != -1) {
-            // STOP EVERYTHING
             holdTimer->stop();
             repeatTimer->stop();
-            
             buttons[pressedIndex].isPressed = false;
             pressedIndex = -1;
             holdProgress = 0.0f;
@@ -167,43 +159,35 @@ public:
     }
 
     void handleMove(const QPointF &localPos, const QPointF &globalPos) {
-        // --- DRAGGING LOGIC ---
         if (pressedIndex != -1 && buttons[pressedIndex].isCenter) {
             if (!isDragging) {
-                // Check if moved enough to count as a drag (10 pixels)
                 if ((globalPos.toPoint() - dragStartPosition).manhattanLength() > 10) {
                     isDragging = true;
-                    holdProgress = 0.0f; // Reset close progress
-                    holdTimer->stop();   // Cancel auto-close
-                    update(); // Clear the white progress arc
+                    holdProgress = 0.0f; 
+                    holdTimer->stop();   
+                    update(); 
                 }
             }
-
             if (isDragging) {
-                // Move the window
                 QPoint delta = globalPos.toPoint() - dragStartPosition;
                 this->move(windowStartPosition + delta);
-                return; // Don't process hover effects while dragging
+                return; 
             }
         }
         
-        // --- STANDARD HOVER LOGIC ---
         int idx = getButtonIndexAt(localPos);
-        
-        // If holding center (non-drag) and slid off, reset close timer
         if (pressedIndex != -1 && buttons[pressedIndex].isCenter && !isDragging && idx != pressedIndex) {
             holdTimer->stop();
             holdProgress = 0.0f;
             update();
         }
-        
         if (idx != hoveredIndex) {
             hoveredIndex = idx;
             update();
         }
     }
 
-    // --- INPUT OVERRIDES ---
+    // --- OVERRIDES ---
     void mousePressEvent(QMouseEvent *e) override { handlePress(e->position(), e->globalPosition()); }
     void mouseReleaseEvent(QMouseEvent *e) override { handleRelease(e->position()); }
     void mouseMoveEvent(QMouseEvent *e) override { handleMove(e->position(), e->globalPosition()); }
@@ -212,7 +196,6 @@ public:
         if (e->type() == QEvent::TouchBegin) {
             QTouchEvent *touch = static_cast<QTouchEvent*>(e);
             if (!touch->points().isEmpty()) {
-                // For touch, globalPos is usually available directly
                 handlePress(touch->points().first().position(), touch->points().first().globalPosition());
                 return true;
             }
@@ -261,7 +244,6 @@ public:
             p.setBrush(fill);
             p.drawPath(path);
 
-            // DRAW PROGRESS (Only if NOT dragging)
             if (btn.isCenter && holdProgress > 0 && !isDragging) {
                 p.setPen(QPen(Qt::white, 5, Qt::SolidLine, Qt::RoundCap));
                 p.setBrush(Qt::NoBrush);
@@ -315,9 +297,17 @@ public:
             }
         }
 
-        if (!isVisible() || gameWindowID == 0) return;
+        if (!isVisible()) return;
+
+        // Force overlay to top of stack every cycle
+        this->raise(); 
+
         Window active; 
         xdo_get_active_window(xdo, &active);
+
+        // Safety: If active is 0, ignore (don't close)
+        if (active == 0) return;
+
         if (active != gameWindowID && active != this->winId()) {
             closeOverlay();
         }
@@ -351,8 +341,18 @@ public:
         if (sscanf(cmd.toStdString().c_str() + 5, "%d %d", &rx, &ry) == 2) {
             xdo_get_active_window(xdo, &gameWindowID);
             
-            if (gameWindowID != 0 && gamePid == 0) {
-                gamePid = xdo_get_pid_window(xdo, gameWindowID);
+            if (gameWindowID != 0) {
+                if (gamePid == 0) gamePid = xdo_get_pid_window(xdo, gameWindowID);
+                
+                // --- X11 MAGIC: FIXED ---
+                // We open a direct X11 connection to set the Transient hint.
+                // This bypasses the Qt6 Private API errors entirely.
+                Display *dpy = XOpenDisplay(NULL);
+                if (dpy) {
+                    XSetTransientForHint(dpy, this->winId(), gameWindowID);
+                    XFlush(dpy);
+                    XCloseDisplay(dpy);
+                }
             }
 
             this->move(rx / devicePixelRatio() - width()/2, ry / devicePixelRatio() - height()/2);
@@ -367,11 +367,9 @@ public:
 int main(int argc, char *argv[]) {
     QCoreApplication::setAttribute(Qt::AA_SynthesizeMouseForUnhandledTouchEvents);
     qputenv("QT_QPA_PLATFORM", "xcb");
-    
     QApplication app(argc, argv);
     app.setApplicationName("GameOverlay");
     app.setDesktopFileName("GameOverlay"); 
-    
     RadialOverlay w;
     return app.exec();
 }

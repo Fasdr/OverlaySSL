@@ -11,7 +11,8 @@ find_package(X11 REQUIRED)
 
 # --- 1. THE OVERLAY APP ---
 add_executable(OverlayApp main.cpp)
-target_link_libraries(OverlayApp PRIVATE Qt6::Widgets xdo)
+# CHANGED: Added X11 here
+target_link_libraries(OverlayApp PRIVATE Qt6::Widgets xdo X11)
 
 # --- 2. THE SPY LIBRARY (.so) ---
 add_library(spy SHARED spy.cpp)
@@ -19,8 +20,6 @@ set_target_properties(spy PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(spy PRIVATE X11 pthread)
 
 # --- 3. GENERATE INSTRUCTION FILE ---
-# We write the instructions to 'steam_setup.txt' in the build directory.
-# This file persists so the Makefile can read it anytime.
 set(LIB_PATH "${CMAKE_CURRENT_BINARY_DIR}/libspy.so")
 set(APP_PATH "${CMAKE_CURRENT_BINARY_DIR}/OverlayApp")
 
