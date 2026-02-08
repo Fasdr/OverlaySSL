@@ -18,7 +18,7 @@
 
 extern "C" {
     #include <xdo.h>
-    #include <X11/Xlib.h> // Standard X11
+    #include <X11/Xlib.h> // We need raw Xlib for Transient hints
 }
 
 // Configuration
@@ -57,6 +57,8 @@ public:
 
     RadialOverlay(QWidget *parent = nullptr) : QWidget(parent) {
         // --- WINDOW FLAGS ---
+        // We keep 'WindowDoesNotAcceptFocus' so we don't minimize the game when clicked.
+        // We rely on 'X11BypassWindowManagerHint' to float above.
         setWindowFlags(Qt::FramelessWindowHint | 
                        Qt::WindowStaysOnTopHint | 
                        Qt::Tool | 
@@ -289,6 +291,7 @@ public:
         return -1;
     }
 
+    // --- AGGRESSIVE FOCUS & Z-ORDER CHECK ---
     void checkFocus() {
         if (gamePid > 0) {
             if (kill(gamePid, 0) == -1) {
@@ -305,7 +308,7 @@ public:
         Window active; 
         xdo_get_active_window(xdo, &active);
 
-        // Safety: If active is 0, ignore (don't close)
+        // If active is 0, we might be in a transient state (e.g. clicking the overlay), so don't close.
         if (active == 0) return;
 
         if (active != gameWindowID && active != this->winId()) {
@@ -344,14 +347,10 @@ public:
             if (gameWindowID != 0) {
                 if (gamePid == 0) gamePid = xdo_get_pid_window(xdo, gameWindowID);
                 
-                // --- X11 MAGIC: FIXED ---
-                // We open a direct X11 connection to set the Transient hint.
-                // This bypasses the Qt6 Private API errors entirely.
-                Display *dpy = XOpenDisplay(NULL);
+                // --- X11 MAGIC: Attach Overlay to Game ---
+                Display *dpy = QGuiApplication::platformNativeInterface()->nativeResourceForWindow("display", NULL);
                 if (dpy) {
-                    XSetTransientForHint(dpy, this->winId(), gameWindowID);
-                    XFlush(dpy);
-                    XCloseDisplay(dpy);
+                    XSetTransientForHint((Display*)dpy, this->winId(), gameWindowID);
                 }
             }
 
