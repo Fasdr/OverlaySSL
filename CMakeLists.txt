@@ -18,21 +18,20 @@ add_library(spy SHARED spy.cpp)
 set_target_properties(spy PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(spy PRIVATE X11 pthread)
 
-# --- 3. STEAM LAUNCH OPTIONS GENERATOR ---
+# --- 3. GENERATE INSTRUCTION FILE ---
+# We write the instructions to 'steam_setup.txt' in the build directory.
+# This file persists so the Makefile can read it anytime.
 set(LIB_PATH "${CMAKE_CURRENT_BINARY_DIR}/libspy.so")
 set(APP_PATH "${CMAKE_CURRENT_BINARY_DIR}/OverlayApp")
 
-# Attached to 'spy' so it prints only after the .so is finished
-add_custom_command(TARGET spy POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND ${CMAKE_COMMAND} -E echo "======================================================"
-    COMMAND ${CMAKE_COMMAND} -E echo "   BUILD COMPLETE - STEAM CONFIGURATION"
-    COMMAND ${CMAKE_COMMAND} -E echo "======================================================"
-    COMMAND ${CMAKE_COMMAND} -E echo "Copy the line below into Steam -> Properties -> Launch Options:"
-    COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND ${CMAKE_COMMAND} -E echo "LD_PRELOAD=\"${LIB_PATH}\" %command% & ${APP_PATH}"
-    COMMAND ${CMAKE_COMMAND} -E echo ""
-    COMMAND ${CMAKE_COMMAND} -E echo "Note: The overlay will auto-close when the game exits."
-    COMMAND ${CMAKE_COMMAND} -E echo "======================================================"
-    VERBATIM
-)
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/steam_setup.txt" CONTENT 
+"======================================================
+   BUILD COMPLETE - STEAM CONFIGURATION
+======================================================
+Copy the line below into Steam -> Properties -> Launch Options:
+
+LD_PRELOAD=\"${LIB_PATH}\" %command% & ${APP_PATH}
+
+Note: The overlay will auto-close when the game exits.
+======================================================
+")

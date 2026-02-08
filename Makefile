@@ -1,6 +1,6 @@
 # Project paths
 BUILD_DIR = build
-# CHANGED: Replaced 'xautomation' with 'xdotool'
+# Corrected package list for Arch (using xdotool for headers)
 ARCH_PKGS = qt6-base xdotool libx11 cmake gcc
 
 all: check_arch_deps build_all
@@ -27,6 +27,8 @@ build_all:
 	@cd $(BUILD_DIR) && cmake .. > /dev/null
 	@echo "Step 3: Compiling Overlay and Spy Library..."
 	@cd $(BUILD_DIR) && make --no-print-directory
+	@echo "Step 4: Launch Instructions"
+	@cat $(BUILD_DIR)/steam_setup.txt
 
 clean:
 	@echo "Cleaning project..."
