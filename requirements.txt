@@ -1,0 +1,13 @@
+# --- System Build Tools ---
+cmake (>= 3.16)
+gcc-c++
+make
+
+# --- Library Dependencies ---
+qt6-base (Widgets & Gui modules)
+libx11-dev
+libxdo-dev (often found in xautomation or libxdo-dev packages)
+pthread (usually part of glibc)
+
+# --- Runtime Requirements ---
+X11 Window System (with a compositor for transparency)

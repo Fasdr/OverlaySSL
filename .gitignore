@@ -1,0 +1,7 @@
+build/
+.qt/
+*.o
+*.moc
+mocs_compilation.cpp
+OverlayApp_autogen/
+spy_autogen/
