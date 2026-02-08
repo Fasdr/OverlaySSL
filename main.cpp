@@ -3,7 +3,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
-#include <QTouchEvent> // Required for tablet touch
+#include <QTouchEvent> 
 #include <QScreen>
 #include <QTimer>
 #include <QSocketNotifier>
@@ -20,6 +20,7 @@ extern "C" {
     #include <xdo.h>
 }
 
+// Configuration
 struct RadialButton {
     QString label;
     std::string key;
@@ -49,21 +50,30 @@ public:
     qint64 lastCloseTime = 0;
 
     RadialOverlay(QWidget *parent = nullptr) : QWidget(parent) {
-        setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool | Qt::X11BypassWindowManagerHint);
+        // --- 1. WINDOW FLAGS ---
+        // Added WindowDoesNotAcceptFocus to be polite to KWin
+        setWindowFlags(Qt::FramelessWindowHint | 
+                       Qt::WindowStaysOnTopHint | 
+                       Qt::Tool | 
+                       Qt::X11BypassWindowManagerHint |
+                       Qt::WindowDoesNotAcceptFocus);
+                       
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_ShowWithoutActivating);
         
-        // --- CRITICAL FIX FOR TABLETS ---
+        // --- 2. TABLET SUPPORT ---
         setAttribute(Qt::WA_AcceptTouchEvents); 
         
         QScreen *screen = QGuiApplication::primaryScreen();
         int size = std::min(screen->geometry().width(), screen->geometry().height()) * 0.35; 
         setFixedSize(size, size);
 
+        // Solid, high-contrast colors
         QColor cMove = QColor(0, 128, 128, 200);   
         QColor cAction = QColor(128, 0, 128, 200); 
         QColor cClose = QColor(160, 80, 80, 220);  
 
+        // Layout
         buttons.push_back({"X", "", 0.0, 0.25, 0, 360, cClose, false, true});
         buttons.push_back({"D", "d", 0.25, 0.60, -90, 180, cMove});
         buttons.push_back({"A", "a", 0.25, 0.60,  90, 180, cMove});
@@ -114,9 +124,7 @@ public:
         holdProgress = 0.0f;
     }
 
-    // --- UNIFIED INPUT LOGIC ---
-    // These functions handle the logic regardless of where the input came from (Mouse or Touch)
-    
+    // --- UNIFIED INPUT (MOUSE + TABLET) ---
     void handlePress(const QPointF &pos) {
         int idx = getButtonIndexAt(pos); 
         if (idx != -1) {
@@ -148,26 +156,21 @@ public:
 
     void handleMove(const QPointF &pos) {
         int idx = getButtonIndexAt(pos);
-        
-        // If holding center button, check if we slid off
         if (pressedIndex != -1 && buttons[pressedIndex].isCenter && idx != pressedIndex) {
             holdTimer->stop();
             holdProgress = 0.0f;
         }
-        
         if (idx != hoveredIndex) {
             hoveredIndex = idx;
             update();
         }
     }
 
-    // --- EVENT OVERRIDES ---
-
+    // --- INPUT OVERRIDES ---
     void mousePressEvent(QMouseEvent *e) override { handlePress(e->position()); }
     void mouseReleaseEvent(QMouseEvent *e) override { handleRelease(e->position()); }
     void mouseMoveEvent(QMouseEvent *e) override { handleMove(e->position()); }
 
-    // This catches raw touch events from tablets that don't emulate mice correctly
     bool event(QEvent *e) override {
         if (e->type() == QEvent::TouchBegin) {
             QTouchEvent *touch = static_cast<QTouchEvent*>(e);
@@ -310,6 +313,7 @@ public:
             xdo_get_active_window(xdo, &gameWindowID);
             
             if (gameWindowID != 0 && gamePid == 0) {
+                // Using xdo_get_pid_window which is standard in recent libxdo
                 gamePid = xdo_get_pid_window(xdo, gameWindowID);
             }
 
@@ -323,11 +327,16 @@ public:
 #include "main.moc"
 
 int main(int argc, char *argv[]) {
-    // Ensure Qt synthesizes mouse events if touch isn't caught, 
-    // but our manual handling ensures priority.
     QCoreApplication::setAttribute(Qt::AA_SynthesizeMouseForUnhandledTouchEvents);
     qputenv("QT_QPA_PLATFORM", "xcb");
+    
     QApplication app(argc, argv);
+    
+    // --- 3. IDENTITY FIX ---
+    // This helps KDE/Compositors remember permissions across restarts
+    app.setApplicationName("GameOverlay");
+    app.setDesktopFileName("GameOverlay"); 
+    
     RadialOverlay w;
     return app.exec();
 }
