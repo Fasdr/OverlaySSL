@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
+#include <QTouchEvent> // Required for tablet touch
 #include <QScreen>
 #include <QTimer>
 #include <QSocketNotifier>
@@ -51,6 +52,9 @@ public:
         setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool | Qt::X11BypassWindowManagerHint);
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_ShowWithoutActivating);
+        
+        // --- CRITICAL FIX FOR TABLETS ---
+        setAttribute(Qt::WA_AcceptTouchEvents); 
         
         QScreen *screen = QGuiApplication::primaryScreen();
         int size = std::min(screen->geometry().width(), screen->geometry().height()) * 0.35; 
@@ -110,8 +114,11 @@ public:
         holdProgress = 0.0f;
     }
 
-    void mousePressEvent(QMouseEvent *e) override {
-        int idx = getButtonIndexAt(e->position()); 
+    // --- UNIFIED INPUT LOGIC ---
+    // These functions handle the logic regardless of where the input came from (Mouse or Touch)
+    
+    void handlePress(const QPointF &pos) {
+        int idx = getButtonIndexAt(pos); 
         if (idx != -1) {
             pressedIndex = idx;
             buttons[idx].isPressed = true;
@@ -126,7 +133,7 @@ public:
         }
     }
 
-    void mouseReleaseEvent(QMouseEvent *e) override {
+    void handleRelease(const QPointF &pos) {
         if (pressedIndex != -1) {
             if (buttons[pressedIndex].isCenter) {
                 holdTimer->stop();
@@ -139,16 +146,51 @@ public:
         }
     }
 
-    void mouseMoveEvent(QMouseEvent *e) override {
-        int idx = getButtonIndexAt(e->position());
+    void handleMove(const QPointF &pos) {
+        int idx = getButtonIndexAt(pos);
+        
+        // If holding center button, check if we slid off
         if (pressedIndex != -1 && buttons[pressedIndex].isCenter && idx != pressedIndex) {
             holdTimer->stop();
             holdProgress = 0.0f;
         }
+        
         if (idx != hoveredIndex) {
             hoveredIndex = idx;
             update();
         }
+    }
+
+    // --- EVENT OVERRIDES ---
+
+    void mousePressEvent(QMouseEvent *e) override { handlePress(e->position()); }
+    void mouseReleaseEvent(QMouseEvent *e) override { handleRelease(e->position()); }
+    void mouseMoveEvent(QMouseEvent *e) override { handleMove(e->position()); }
+
+    // This catches raw touch events from tablets that don't emulate mice correctly
+    bool event(QEvent *e) override {
+        if (e->type() == QEvent::TouchBegin) {
+            QTouchEvent *touch = static_cast<QTouchEvent*>(e);
+            if (!touch->points().isEmpty()) {
+                handlePress(touch->points().first().position());
+                return true;
+            }
+        }
+        else if (e->type() == QEvent::TouchUpdate) {
+            QTouchEvent *touch = static_cast<QTouchEvent*>(e);
+            if (!touch->points().isEmpty()) {
+                handleMove(touch->points().first().position());
+                return true;
+            }
+        }
+        else if (e->type() == QEvent::TouchEnd) {
+            QTouchEvent *touch = static_cast<QTouchEvent*>(e);
+            if (!touch->points().isEmpty()) {
+                handleRelease(touch->points().first().position());
+                return true;
+            }
+        }
+        return QWidget::event(e);
     }
 
     void paintEvent(QPaintEvent *) override {
@@ -281,6 +323,9 @@ public:
 #include "main.moc"
 
 int main(int argc, char *argv[]) {
+    // Ensure Qt synthesizes mouse events if touch isn't caught, 
+    // but our manual handling ensures priority.
+    QCoreApplication::setAttribute(Qt::AA_SynthesizeMouseForUnhandledTouchEvents);
     qputenv("QT_QPA_PLATFORM", "xcb");
     QApplication app(argc, argv);
     RadialOverlay w;
