@@ -49,9 +49,13 @@ public:
     float holdProgress = 0.0f; 
     qint64 lastCloseTime = 0;
 
+    // --- DRAG SUPPORT ---
+    QPoint dragStartPosition;
+    QPoint windowStartPosition;
+    bool isDragging = false;
+
     RadialOverlay(QWidget *parent = nullptr) : QWidget(parent) {
         // --- 1. WINDOW FLAGS ---
-        // Added WindowDoesNotAcceptFocus to be polite to KWin
         setWindowFlags(Qt::FramelessWindowHint | 
                        Qt::WindowStaysOnTopHint | 
                        Qt::Tool | 
@@ -98,6 +102,7 @@ public:
 
         holdTimer = new QTimer(this);
         connect(holdTimer, &QTimer::timeout, this, [this](){
+            if (isDragging) return; // Don't close while dragging
             holdProgress += 0.05f; 
             if (holdProgress >= 1.0f) {
                 holdTimer->stop();
@@ -125,14 +130,20 @@ public:
     }
 
     // --- UNIFIED INPUT (MOUSE + TABLET) ---
-    void handlePress(const QPointF &pos) {
-        int idx = getButtonIndexAt(pos); 
+    void handlePress(const QPointF &localPos, const QPointF &globalPos) {
+        int idx = getButtonIndexAt(localPos); 
         if (idx != -1) {
             pressedIndex = idx;
             buttons[idx].isPressed = true;
+            
             if (buttons[idx].isCenter) {
+                // START CLOSE TIMER & PREPARE DRAG
                 holdProgress = 0.0f;
                 holdTimer->start(50);
+                
+                dragStartPosition = globalPos.toPoint();
+                windowStartPosition = this->pos();
+                isDragging = false;
             } else {
                 sendKeyToGame(buttons[idx].key.c_str());
                 repeatTimer->start(10); 
@@ -143,23 +154,49 @@ public:
 
     void handleRelease(const QPointF &pos) {
         if (pressedIndex != -1) {
-            if (buttons[pressedIndex].isCenter) {
-                holdTimer->stop();
-                holdProgress = 0.0f;
-            }
+            // STOP EVERYTHING
+            holdTimer->stop();
+            repeatTimer->stop();
+            
             buttons[pressedIndex].isPressed = false;
             pressedIndex = -1;
-            repeatTimer->stop(); 
+            holdProgress = 0.0f;
+            isDragging = false;
             update();
         }
     }
 
-    void handleMove(const QPointF &pos) {
-        int idx = getButtonIndexAt(pos);
-        if (pressedIndex != -1 && buttons[pressedIndex].isCenter && idx != pressedIndex) {
+    void handleMove(const QPointF &localPos, const QPointF &globalPos) {
+        // --- DRAGGING LOGIC ---
+        if (pressedIndex != -1 && buttons[pressedIndex].isCenter) {
+            if (!isDragging) {
+                // Check if moved enough to count as a drag (10 pixels)
+                if ((globalPos.toPoint() - dragStartPosition).manhattanLength() > 10) {
+                    isDragging = true;
+                    holdProgress = 0.0f; // Reset close progress
+                    holdTimer->stop();   // Cancel auto-close
+                    update(); // Clear the white progress arc
+                }
+            }
+
+            if (isDragging) {
+                // Move the window
+                QPoint delta = globalPos.toPoint() - dragStartPosition;
+                this->move(windowStartPosition + delta);
+                return; // Don't process hover effects while dragging
+            }
+        }
+        
+        // --- STANDARD HOVER LOGIC ---
+        int idx = getButtonIndexAt(localPos);
+        
+        // If holding center (non-drag) and slid off, reset close timer
+        if (pressedIndex != -1 && buttons[pressedIndex].isCenter && !isDragging && idx != pressedIndex) {
             holdTimer->stop();
             holdProgress = 0.0f;
+            update();
         }
+        
         if (idx != hoveredIndex) {
             hoveredIndex = idx;
             update();
@@ -167,22 +204,23 @@ public:
     }
 
     // --- INPUT OVERRIDES ---
-    void mousePressEvent(QMouseEvent *e) override { handlePress(e->position()); }
+    void mousePressEvent(QMouseEvent *e) override { handlePress(e->position(), e->globalPosition()); }
     void mouseReleaseEvent(QMouseEvent *e) override { handleRelease(e->position()); }
-    void mouseMoveEvent(QMouseEvent *e) override { handleMove(e->position()); }
+    void mouseMoveEvent(QMouseEvent *e) override { handleMove(e->position(), e->globalPosition()); }
 
     bool event(QEvent *e) override {
         if (e->type() == QEvent::TouchBegin) {
             QTouchEvent *touch = static_cast<QTouchEvent*>(e);
             if (!touch->points().isEmpty()) {
-                handlePress(touch->points().first().position());
+                // For touch, globalPos is usually available directly
+                handlePress(touch->points().first().position(), touch->points().first().globalPosition());
                 return true;
             }
         }
         else if (e->type() == QEvent::TouchUpdate) {
             QTouchEvent *touch = static_cast<QTouchEvent*>(e);
             if (!touch->points().isEmpty()) {
-                handleMove(touch->points().first().position());
+                handleMove(touch->points().first().position(), touch->points().first().globalPosition());
                 return true;
             }
         }
@@ -223,7 +261,8 @@ public:
             p.setBrush(fill);
             p.drawPath(path);
 
-            if (btn.isCenter && holdProgress > 0) {
+            // DRAW PROGRESS (Only if NOT dragging)
+            if (btn.isCenter && holdProgress > 0 && !isDragging) {
                 p.setPen(QPen(Qt::white, 5, Qt::SolidLine, Qt::RoundCap));
                 p.setBrush(Qt::NoBrush);
                 p.drawArc(QRectF(cx - rIn, cy - rIn, rIn*2, rIn*2), 90 * 16, -holdProgress * 360 * 16);
@@ -313,7 +352,6 @@ public:
             xdo_get_active_window(xdo, &gameWindowID);
             
             if (gameWindowID != 0 && gamePid == 0) {
-                // Using xdo_get_pid_window which is standard in recent libxdo
                 gamePid = xdo_get_pid_window(xdo, gameWindowID);
             }
 
@@ -331,9 +369,6 @@ int main(int argc, char *argv[]) {
     qputenv("QT_QPA_PLATFORM", "xcb");
     
     QApplication app(argc, argv);
-    
-    // --- 3. IDENTITY FIX ---
-    // This helps KDE/Compositors remember permissions across restarts
     app.setApplicationName("GameOverlay");
     app.setDesktopFileName("GameOverlay"); 
     
