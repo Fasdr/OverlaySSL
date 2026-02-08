@@ -1,7 +1,7 @@
 # Project paths
 BUILD_DIR = build
-# Arch-specific package names for the check
-ARCH_PKGS = qt6-base xautomation libx11 cmake gcc
+# CHANGED: Replaced 'xautomation' with 'xdotool'
+ARCH_PKGS = qt6-base xdotool libx11 cmake gcc
 
 all: check_arch_deps build_all
 
@@ -11,7 +11,7 @@ check_arch_deps:
 		for pkg in $(ARCH_PKGS); do \
 			pacman -Qs $$pkg > /dev/null || { \
 				echo "Error: Package '$$pkg' is missing."; \
-				echo "Please run: sudo pacman -S qt6-base xautomation libx11 cmake gcc"; \
+				echo "Please run: sudo pacman -S qt6-base xdotool libx11 cmake gcc"; \
 				exit 1; \
 			}; \
 		done; \
